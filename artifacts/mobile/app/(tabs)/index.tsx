@@ -37,8 +37,17 @@ function StatusIndicator({ label, value, ok }: { label: string; value: string; o
 export default function ShieldScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { firewallEnabled, toggleFirewall, scanState, threats, threatCount, criticalCount, networkStatus, rootDetected } =
-    useSecurity();
+  const {
+    firewallEnabled,
+    toggleFirewall,
+    scanState,
+    threatCount,
+    criticalCount,
+    networkStatus,
+    rootDetected,
+    startScan,
+    purgeAll,
+  } = useSecurity();
 
   const isScanning = scanState === 'scanning';
   const glowOpacity = useSharedValue(0.3);
@@ -70,6 +79,16 @@ export default function ShieldScreen() {
     toggleFirewall();
   };
 
+  const handleScan = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    startScan();
+  };
+
+  const handlePurge = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    purgeAll();
+  };
+
   const overallOk = threatCount === 0 && !rootDetected;
   const statusColor = isScanning ? colors.warning : overallOk ? colors.primary : colors.threat;
   const statusText = isScanning
@@ -84,11 +103,10 @@ export default function ShieldScreen() {
       contentContainerStyle={[styles.content, { paddingTop: topPad + 16, paddingBottom: bottomPad + 100 }]}
       showsVerticalScrollIndicator={false}
     >
-      {/* Cabecera */}
       <View style={styles.headerRow}>
         <View>
           <Text style={[styles.appTitle, { color: colors.cyan }]}>AURA</Text>
-          <Text style={[styles.appSubtitle, { color: colors.foreground }]}>DEFENSA</Text>
+          <Text style={[styles.appSubtitle, { color: colors.foreground }]}>DEFENSENSOR</Text>
         </View>
         <Animated.View
           style={[
@@ -102,105 +120,119 @@ export default function ShieldScreen() {
         </Animated.View>
       </View>
 
-      {/* Radar HUD */}
-      <View style={styles.radarContainer}>
-        <Animated.View
-          style={[
-            styles.radarGlow,
-            { shadowColor: statusColor, backgroundColor: `${statusColor}08` },
-            glowStyle,
-          ]}
-        >
-          <RadarHUD isScanning={isScanning} threatCount={threatCount} size={270} />
-        </Animated.View>
-
-        <Text style={[styles.radarLabel, { color: `${colors.cyan}80` }]}>
-          {isScanning ? '[ BARRIDO ACTIVO ]' : '[ IDS HOLOGRÁFICO ]'}
-        </Text>
-      </View>
-
-      {/* Tarjeta cortafuegos */}
       <Animated.View
         style={[
-          styles.firewallCard,
+          styles.coreCard,
           {
-            backgroundColor: `${colors.card}DD`,
             borderColor: firewallEnabled ? `${colors.primary}80` : `${colors.border}`,
-            shadowColor: colors.primary,
+            backgroundColor: `${colors.card}EE`,
+            shadowColor: colors.cyan,
           },
-          firewallEnabled && fwGlowStyle,
+          fwGlowStyle,
         ]}
       >
-        <View style={styles.firewallLeft}>
-          <MaterialCommunityIcons
-            name={firewallEnabled ? 'shield-check' : 'shield-off'}
-            size={28}
-            color={firewallEnabled ? colors.primary : colors.mutedForeground}
-          />
+        <View style={styles.coreHeader}>
           <View>
-            <Text style={[styles.fwTitle, { color: colors.foreground }]}>CORTAFUEGOS VPN</Text>
-            <Text style={[styles.fwSub, { color: firewallEnabled ? colors.primary : colors.mutedForeground }]}>
-              {firewallEnabled ? 'Tráfico enrutado — 10.0.0.1 activo' : 'Desactivado — tráfico sin protección'}
+            <Text style={[styles.coreLabel, { color: colors.mutedForeground }]}>P2P NETWORK CORE</Text>
+            <Text style={[styles.coreTitle, { color: colors.foreground }]}>NODO DE CONTRAINTELIGENCIA</Text>
+          </View>
+          <View style={[styles.coreSignal, { backgroundColor: `${colors.primary}16` }]}> 
+            <MaterialCommunityIcons name="lan-connect" size={16} color={colors.primary} />
+            <Text style={[styles.coreSignalText, { color: colors.primary }]}>LIVE</Text>
+          </View>
+        </View>
+
+        <View style={styles.radarStage}>
+          <Animated.View
+            style={[
+              styles.radarGlow,
+              { shadowColor: statusColor, backgroundColor: `${statusColor}08` },
+              glowStyle,
+            ]}
+          >
+            <RadarHUD isScanning={isScanning} threatCount={threatCount} size={220} />
+          </Animated.View>
+          <View style={styles.coreInfo}>
+            <Text style={[styles.coreInfoText, { color: colors.cyan }]}>TRÁFICO ENRUTADO</Text>
+            <Text style={[styles.coreInfoSub, { color: colors.foreground }]}> 
+              {firewallEnabled ? 'Canal seguro activo · filtrado local' : 'Esperando enlace de confianza'}
+            </Text>
+            <Text style={[styles.coreInfoSub, { color: colors.mutedForeground }]}> 
+              {networkStatus?.gateway ? `GW ${networkStatus.gateway}` : 'Sin ruta definida'}
             </Text>
           </View>
         </View>
-        <Switch
-          value={firewallEnabled}
-          onValueChange={handleToggle}
-          trackColor={{ false: colors.border, true: `${colors.primary}60` }}
-          thumbColor={firewallEnabled ? colors.primary : colors.mutedForeground}
-          ios_backgroundColor={colors.border}
-        />
       </Animated.View>
 
-      {/* Cuadrícula de estado */}
-      <View style={styles.statGrid}>
-        <StatusIndicator
-          label="RED"
-          value={networkStatus ? 'SEGURA' : 'SIN ESCANEO'}
-          ok={!!networkStatus && !networkStatus.mitm}
-        />
-        <StatusIndicator
-          label="ROOT"
-          value={rootDetected ? 'COMPROMETIDO' : 'LIMPIO'}
-          ok={!rootDetected}
-        />
-        <StatusIndicator
-          label="AMENAZAS"
-          value={scanState === 'idle' ? '—' : `${threatCount} ACTIVAS`}
-          ok={threatCount === 0}
-        />
-        <StatusIndicator
-          label="CRÍTICO"
-          value={scanState === 'idle' ? '—' : `${criticalCount} HALLADAS`}
-          ok={criticalCount === 0}
-        />
+      <View style={styles.actionRow}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={handleScan}
+          style={[styles.actionButton, { backgroundColor: `${colors.cyan}16`, borderColor: `${colors.cyan}45` }]}
+        >
+          <MaterialCommunityIcons name="radar" size={18} color={colors.cyan} />
+          <Text style={[styles.actionText, { color: colors.cyan }]}>SCAN</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={handlePurge}
+          style={[styles.actionButton, { backgroundColor: `${colors.threat}16`, borderColor: `${colors.threat}45` }]}
+        >
+          <MaterialCommunityIcons name="delete-sweep" size={18} color={colors.threat} />
+          <Text style={[styles.actionText, { color: colors.threat }]}>PURGE</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={handleToggle}
+          style={[styles.actionButton, { backgroundColor: firewallEnabled ? `${colors.primary}16` : `${colors.border}80`, borderColor: firewallEnabled ? `${colors.primary}45` : `${colors.border}` }]}
+        >
+          <MaterialCommunityIcons name={firewallEnabled ? 'shield-check' : 'shield-off'} size={18} color={firewallEnabled ? colors.primary : colors.mutedForeground} />
+          <Text style={[styles.actionText, { color: firewallEnabled ? colors.primary : colors.mutedForeground }]}>LATCH</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Panel de ruta VPN */}
-      {firewallEnabled && (
-        <View style={[styles.infoPanel, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30` }]}>
-          <View style={styles.infoRow}>
-            <Ionicons name="git-network" size={12} color={colors.primary} />
-            <Text style={[styles.infoText, { color: colors.primary }]}>VPN TUN — IPv4: 10.0.0.2 → GW 10.0.0.1</Text>
+      <View style={styles.statGrid}>
+        <StatusIndicator label="RED" value={networkStatus ? 'SEGURA' : 'SIN ESCANEO'} ok={!!networkStatus && !networkStatus.mitm} />
+        <StatusIndicator label="ROOT" value={rootDetected ? 'COMPROMETIDO' : 'LIMPIO'} ok={!rootDetected} />
+        <StatusIndicator label="AMENAZAS" value={scanState === 'idle' ? '—' : `${threatCount} ACTIVAS`} ok={threatCount === 0} />
+        <StatusIndicator label="CRÍTICO" value={scanState === 'idle' ? '—' : `${criticalCount} HALLADAS`} ok={criticalCount === 0} />
+      </View>
+
+      <View style={[styles.sentinelCard, { borderColor: `${colors.border}`, backgroundColor: `${colors.card}DD` }]}> 
+        <View style={styles.sentinelHeader}>
+          <MaterialCommunityIcons name="chip" size={18} color={colors.cyan} />
+          <Text style={[styles.sentinelTitle, { color: colors.foreground }]}>HARDWARE SENTINEL</Text>
+        </View>
+        <View style={styles.sentinelGrid}>
+          <View style={styles.sentinelCell}>
+            <Text style={[styles.sentinelLabel, { color: colors.mutedForeground }]}>LINK</Text>
+            <Text style={[styles.sentinelValue, { color: colors.primary }]}> 
+              {networkStatus?.encrypted ? 'ENCRYPTED' : 'STANDBY'}
+            </Text>
           </View>
-          <View style={styles.infoRow}>
-            <Ionicons name="lock-closed" size={12} color={colors.primary} />
-            <Text style={[styles.infoText, { color: colors.primary }]}>Filtro de paquetes ACTIVO — 0.0.0.0/0 enrutado</Text>
+          <View style={styles.sentinelCell}>
+            <Text style={[styles.sentinelLabel, { color: colors.mutedForeground }]}>ROOT</Text>
+            <Text style={[styles.sentinelValue, { color: rootDetected ? colors.threat : colors.primary }]}> 
+              {rootDetected ? 'ALERT' : 'LOCKED'}
+            </Text>
           </View>
-          <View style={styles.infoRow}>
-            <Ionicons name="shield-checkmark" size={12} color={colors.primary} />
-            <Text style={[styles.infoText, { color: colors.primary }]}>Modo IDS: monitorizando anomalías de red</Text>
+          <View style={styles.sentinelCell}>
+            <Text style={[styles.sentinelLabel, { color: colors.mutedForeground }]}>DEBUG</Text>
+            <Text style={[styles.sentinelValue, { color: colors.warning }]}> 
+              {scanState === 'scanning' ? 'ACTIVE' : 'WATCH'}
+            </Text>
           </View>
         </View>
-      )}
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { paddingHorizontal: 18, gap: 20 },
+  content: { paddingHorizontal: 18, gap: 16 },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -241,47 +273,86 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     letterSpacing: 1.5,
   },
-  radarContainer: {
-    alignItems: 'center',
-    gap: 10,
-  },
-  radarGlow: {
-    borderRadius: 200,
+  coreCard: {
+    borderWidth: 1,
+    borderRadius: 16,
     padding: 16,
+    gap: 16,
     shadowOffset: { width: 0, height: 0 },
-    shadowRadius: 30,
+    shadowRadius: 20,
+    elevation: 4,
   },
-  radarLabel: {
-    fontSize: 10,
-    fontFamily: 'Inter_500Medium',
-    letterSpacing: 3,
-  },
-  firewallCard: {
+  coreHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
-    borderRadius: 10,
-    borderWidth: 1,
-    shadowOffset: { width: 0, height: 0 },
-    shadowRadius: 15,
-    elevation: 4,
   },
-  firewallLeft: {
+  coreLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 2.5,
+  },
+  coreTitle: {
+    fontSize: 15,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1,
+    marginTop: 3,
+  },
+  coreSignal: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    flex: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    gap: 6,
   },
-  fwTitle: {
-    fontSize: 14,
+  coreSignalText: {
+    fontSize: 10,
     fontFamily: 'Inter_700Bold',
-    letterSpacing: 1.5,
+    letterSpacing: 1.4,
   },
-  fwSub: {
+  radarStage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  radarGlow: {
+    borderRadius: 200,
+    padding: 8,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 26,
+  },
+  coreInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  coreInfoText: {
     fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 2,
+  },
+  coreInfoSub: {
+    fontSize: 12,
     fontFamily: 'Inter_400Regular',
-    marginTop: 2,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  actionText: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.8,
   },
   statGrid: {
     flexDirection: 'row',
@@ -312,20 +383,43 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     letterSpacing: 0.5,
   },
-  infoPanel: {
+  sentinelCard: {
     borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    gap: 7,
+    borderRadius: 12,
+    padding: 14,
+    gap: 10,
   },
-  infoRow: {
+  sentinelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  infoText: {
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
-    letterSpacing: 0.3,
+  sentinelTitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 1.6,
+  },
+  sentinelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  sentinelCell: {
+    flex: 1,
+    minWidth: '30%',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  sentinelLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 1.6,
+  },
+  sentinelValue: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    marginTop: 2,
   },
 });

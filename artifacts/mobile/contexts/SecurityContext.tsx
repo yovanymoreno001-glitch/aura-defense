@@ -1,5 +1,5 @@
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 
 export type ThreatSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type LogLevel = 'OK' | 'THREAT' | 'WARN' | 'AUDIT' | 'INFO' | 'SYS';
@@ -49,6 +49,53 @@ interface SecurityContextValue {
   criticalCount: number;
 }
 
+interface NativeSecuritySnapshot {
+  deviceName: string;
+  osVersion: string;
+  debugEnabled: boolean;
+  rootDetected: boolean;
+  permissions: {
+    fineLocation: boolean;
+    notifications: boolean;
+    microphone: boolean;
+  };
+  networkStatus: {
+    ssid: string;
+    gateway: string;
+    dns: string;
+    mitm: boolean;
+    encrypted: boolean;
+    vpnActive: boolean;
+  };
+  telemetry: {
+    storageAvailable: string;
+    storageTotal: string;
+    ramAvailableMb: number;
+    ramTotalMb: number;
+    lowMemory: boolean;
+    batteryLevel: number;
+  };
+  threats: Array<{
+    id: string;
+    name: string;
+    packageName: string;
+    severity: ThreatSeverity;
+    threatType: string;
+    description: string;
+    permissions: string[];
+    riskScore: number;
+    purged: boolean;
+  }>;
+  accessibilityServices: Array<{ packageName: string; serviceName: string }>;
+}
+
+interface NativeSecurityModule {
+  requestRuntimePermissions: (callback?: (success: boolean) => void) => Promise<boolean> | boolean;
+  collectSecuritySnapshot: () => Promise<NativeSecuritySnapshot>;
+  startRealtimeMonitoring: () => void;
+  stopRealtimeMonitoring: () => void;
+}
+
 const SecurityContext = createContext<SecurityContextValue | null>(null);
 
 const wait = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
@@ -65,131 +112,13 @@ const makeTs = () => {
   return `${h}:${m}:${s}.${ms}`;
 };
 
-interface SimApp {
-  name: string;
-  pkg: string;
-  permissions: string[];
-  risky: boolean;
-  severity?: ThreatSeverity;
-  threatType?: string;
-  description?: string;
-  riskScore?: number;
-}
+const nativeModule = Platform.OS === 'android'
+  ? (NativeModules.AuraSecurityModule as NativeSecurityModule | undefined)
+  : undefined;
 
-const SIMULATED_APPS: SimApp[] = [
-  {
-    name: 'SystemCore Services',
-    pkg: 'com.android.systemcore',
-    permissions: ['BOOT_COMPLETED', 'INTERNET'],
-    risky: false,
-  },
-  {
-    name: 'QuickShare Pro',
-    pkg: 'com.quickshare.pro',
-    permissions: [
-      'INTERNET',
-      'READ_CONTACTS',
-      'ACCESS_FINE_LOCATION',
-      'READ_EXTERNAL_STORAGE',
-      'RECEIVE_BOOT_COMPLETED',
-      'FOREGROUND_SERVICE',
-    ],
-    risky: true,
-    severity: 'critical',
-    threatType: 'Spyware / Data Exfiltration',
-    description:
-      'Requests boot persistence + contacts + GPS + storage in parallel. Known data broker fingerprint. Active C2 communication detected.',
-    riskScore: 94,
-  },
-  {
-    name: 'BatteryBooster+',
-    pkg: 'com.battery.boosterplus',
-    permissions: ['INTERNET', 'WRITE_SETTINGS', 'SYSTEM_ALERT_WINDOW', 'FOREGROUND_SERVICE'],
-    risky: true,
-    severity: 'high',
-    threatType: 'Adware / Overlay Attack',
-    description:
-      'SYSTEM_ALERT_WINDOW enables screen overlay over banking and auth apps. Used for credential phishing and ad injection.',
-    riskScore: 78,
-  },
-  {
-    name: 'Flashlight Widget',
-    pkg: 'com.flash.widget',
-    permissions: ['CAMERA'],
-    risky: false,
-  },
-  {
-    name: 'Clock & Calendar',
-    pkg: 'com.clock.calendar',
-    permissions: ['READ_CALENDAR', 'INTERNET'],
-    risky: false,
-  },
-  {
-    name: 'DataSync Helper',
-    pkg: 'com.datasync.helper',
-    permissions: [
-      'INTERNET',
-      'READ_EXTERNAL_STORAGE',
-      'WRITE_EXTERNAL_STORAGE',
-      'ACCESS_FINE_LOCATION',
-      'READ_CALL_LOG',
-      'RECEIVE_BOOT_COMPLETED',
-      'READ_SMS',
-    ],
-    risky: true,
-    severity: 'critical',
-    threatType: 'Stalkerware',
-    description:
-      'Call logs + SMS + GPS + filesystem + boot persistence. Classic stalkerware signature. Possible domestic surveillance tool.',
-    riskScore: 97,
-  },
-  {
-    name: 'VPN Master Free',
-    pkg: 'com.vpn.master.free',
-    permissions: [
-      'INTERNET',
-      'FOREGROUND_SERVICE',
-      'RECEIVE_BOOT_COMPLETED',
-      'READ_EXTERNAL_STORAGE',
-    ],
-    risky: true,
-    severity: 'medium',
-    threatType: 'Suspicious VPN Provider',
-    description:
-      'Unverified VPN with boot persistence. Traffic routing to unvalidated servers. Possible MITM proxy injection.',
-    riskScore: 61,
-  },
-  {
-    name: 'Google Maps',
-    pkg: 'com.google.android.apps.maps',
-    permissions: ['ACCESS_FINE_LOCATION', 'INTERNET'],
-    risky: false,
-  },
-  {
-    name: 'Chrome Browser',
-    pkg: 'com.android.chrome',
-    permissions: ['INTERNET', 'CAMERA', 'RECORD_AUDIO', 'ACCESS_FINE_LOCATION'],
-    risky: false,
-  },
-  {
-    name: 'CleanMaster Pro',
-    pkg: 'com.clean.master.pro',
-    permissions: [
-      'INTERNET',
-      'WRITE_SETTINGS',
-      'SYSTEM_ALERT_WINDOW',
-      'READ_CONTACTS',
-      'ACCESS_FINE_LOCATION',
-      'RECEIVE_BOOT_COMPLETED',
-    ],
-    risky: true,
-    severity: 'high',
-    threatType: 'Aggressive Adware / PUP',
-    description:
-      'Potentially Unwanted Program. Screen overlay + contacts + GPS with no legitimate cleaning justification. Known ad fraud network participant.',
-    riskScore: 82,
-  },
-];
+const nativeEmitter = Platform.OS === 'android' && nativeModule
+  ? new NativeEventEmitter(NativeModules.AuraSecurityModule as never)
+  : null;
 
 export function SecurityProvider({ children }: { children: React.ReactNode }) {
   const [firewallEnabled, setFirewallEnabled] = useState(false);
@@ -201,9 +130,65 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
   const [debugDetected, setDebugDetected] = useState(false);
   const scanning = useRef(false);
 
-  const toggleFirewall = useCallback(() => {
-    setFirewallEnabled((prev) => !prev);
+  const log = useCallback((level: LogLevel, message: string) => {
+    setLogs((prev) => [
+      ...prev,
+      { id: makeId(), timestamp: makeTs(), level, message },
+    ]);
   }, []);
+
+  useEffect(() => {
+    if (!nativeModule) return;
+
+    const sub = nativeEmitter?.addListener('onSnapshot', (payload: NativeSecuritySnapshot) => {
+      setNetworkStatus({
+        ssid: payload.networkStatus.ssid,
+        gateway: payload.networkStatus.gateway,
+        dns: payload.networkStatus.dns,
+        mitm: payload.networkStatus.mitm,
+        encrypted: payload.networkStatus.encrypted,
+      });
+      setRootDetected(payload.rootDetected);
+      setDebugDetected(payload.debugEnabled);
+      setThreats((prev) => prev.length > 0 ? prev : (payload.threats ?? []).map((item, index) => ({
+        id: `${item.packageName}-${index}`,
+        name: item.name,
+        packageName: item.packageName,
+        severity: item.severity,
+        threatType: item.threatType,
+        description: item.description,
+        permissions: item.permissions,
+        riskScore: item.riskScore,
+        purged: false,
+      })));
+    });
+
+    const clipboardSub = nativeEmitter?.addListener('onClipboardChange', (payload: { message: string }) => {
+      log('WARN', payload.message);
+    });
+
+    return () => {
+      sub?.remove();
+      clipboardSub?.remove();
+      nativeModule.stopRealtimeMonitoring();
+    };
+  }, [log]);
+
+  const toggleFirewall = useCallback(() => {
+    setFirewallEnabled((prev) => {
+      const next = !prev;
+      if (nativeModule) {
+        if (next) {
+          nativeModule.startRealtimeMonitoring();
+          log('OK', 'Real-time native monitoring enabled.');
+        } else {
+          nativeModule.stopRealtimeMonitoring();
+          log('OK', 'Real-time native monitoring paused.');
+        }
+      }
+      return next;
+    });
+  }, [log]);
 
   const startScan = useCallback(async () => {
     if (scanning.current) return;
@@ -212,165 +197,75 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
     setThreats([]);
     setLogs([]);
 
-    const log = (level: LogLevel, message: string) => {
-      setLogs((prev) => [
-        ...prev,
-        { id: makeId(), timestamp: makeTs(), level, message },
-      ]);
-    };
-
-    // --- Phase 0: Init ---
     await wait(80);
-    log('SYS', 'AuraDefensa Engine v2.1.0 — Initializing threat analysis suite');
+    log('SYS', 'AuraDefensa Engine v2.2.0 — Initializing native Android security stack');
     await wait(180);
-    log('SYS', 'Loading signature database: 3,847 threat patterns indexed');
+    log('AUDIT', 'Modules loaded: PERMISSIONS · NETWORK · PACKAGES · PRIVACY');
     await wait(200);
     log('AUDIT', `Platform: ${Platform.OS.toUpperCase()} ${Platform.Version}`);
-    await wait(150);
-    log('AUDIT', 'Modules loaded: INTEGRITY · NET · PKG · PRIV · EXIF');
-    await wait(200);
 
-    // --- Phase 1: System Integrity ---
-    log('AUDIT', '════════ PHASE 1: SYSTEM INTEGRITY ════════');
-    await wait(220);
-    log('AUDIT', 'Scanning /system/bin/su ...');
-    await wait(280);
-    log('AUDIT', 'Scanning /system/xbin/su ...');
-    await wait(260);
-    log('AUDIT', 'Scanning /sbin/su ...');
-    await wait(300);
-    log('AUDIT', 'Scanning /data/local/tmp/su ...');
-    await wait(350);
-    log('AUDIT', 'Checking ROM build keys — test-keys signature probe');
-    await wait(400);
+    if (nativeModule) {
+      try {
+        await wait(220);
+        log('AUDIT', 'Requesting runtime permissions from the Android runtime');
+        await nativeModule.requestRuntimePermissions();
+        await wait(250);
+        const snapshot = await nativeModule.collectSecuritySnapshot();
+        setNetworkStatus({
+          ssid: snapshot.networkStatus.ssid,
+          gateway: snapshot.networkStatus.gateway,
+          dns: snapshot.networkStatus.dns,
+          mitm: snapshot.networkStatus.mitm,
+          encrypted: snapshot.networkStatus.encrypted,
+        });
+        setRootDetected(snapshot.rootDetected);
+        setDebugDetected(snapshot.debugEnabled);
 
-    const isDebug = __DEV__;
-    setRootDetected(false);
-    setDebugDetected(isDebug);
-
-    log('OK', 'Root binaries: CLEAN — No su vectors found in critical paths');
-    await wait(200);
-    log('OK', 'ROM signature: VERIFIED — Official release keys confirmed');
-    await wait(200);
-    if (isDebug) {
-      log('WARN', 'DEBUG mode active — Debugger connected (isDebuggerConnected=true)');
-      log('WARN', 'Reverse-engineering risk elevated. Anti-tamper layer engaged.');
-    } else {
-      log('OK', 'Debug state: CLEAN — No debugger attached');
-    }
-    await wait(250);
-    log('OK', 'System integrity score: 98/100');
-    await wait(200);
-
-    // --- Phase 2: Network Analysis ---
-    log('AUDIT', '════════ PHASE 2: NETWORK THREAT ANALYSIS ════════');
-    await wait(200);
-    log('INFO', 'Interface: wlan0 — 802.11ac 5 GHz / WPA3');
-    await wait(250);
-    log('AUDIT', 'Resolving gateway address ...');
-    await wait(320);
-    log('INFO', 'Gateway: 192.168.1.1 — ARP mapping validated');
-    await wait(250);
-    log('AUDIT', 'Checking ARP cache for poisoning vectors ...');
-    await wait(450);
-    log('OK', 'ARP table: CLEAN — No cache poisoning detected');
-    await wait(220);
-    log('AUDIT', 'Probing DNS resolver: 8.8.8.8 (Google Public DNS) ...');
-    await wait(400);
-    log('OK', 'DNS resolver: TRUSTED — DNSSEC validation passed');
-    await wait(250);
-    log('AUDIT', 'Executing MitM detection probe (TLS fingerprint analysis) ...');
-    await wait(600);
-    log('OK', 'TLS chain: VALID — No certificate injection or interception');
-    await wait(200);
-    log('OK', 'Network threat status: SECURE');
-    setNetworkStatus({ ssid: 'WiFi-Home-5G', gateway: '192.168.1.1', dns: '8.8.8.8', mitm: false, encrypted: true });
-    await wait(250);
-
-    // --- Phase 3: Package Scanner ---
-    log('AUDIT', '════════ PHASE 3: PACKAGE THREAT ANALYSIS ════════');
-    await wait(200);
-    log('INFO', `Enumerating packages: ${SIMULATED_APPS.length} applications detected`);
-    await wait(300);
-
-    const found: ThreatItem[] = [];
-    for (const app of SIMULATED_APPS) {
-      await wait(120 + Math.random() * 180);
-      log('AUDIT', `Analyzing: ${app.name}  [${app.pkg}]`);
-      await wait(80 + Math.random() * 120);
-      if (app.risky) {
-        log('THREAT', `⚠ HIGH RISK: ${app.name} — ${app.threatType}`);
-        log('THREAT', `  Flagged perms: ${app.permissions.slice(0, 3).join(' · ')}`);
-        log('THREAT', `  Risk score: ${app.riskScore}/100`);
-        const item: ThreatItem = {
-          id: makeId(),
-          name: app.name,
-          packageName: app.pkg,
-          severity: app.severity!,
-          threatType: app.threatType!,
-          description: app.description!,
-          permissions: app.permissions,
-          riskScore: app.riskScore!,
+        const found = (snapshot.threats ?? []).map((item, index) => ({
+          id: `${item.packageName}-${index}`,
+          name: item.name || item.packageName,
+          packageName: item.packageName,
+          severity: item.severity,
+          threatType: item.threatType,
+          description: item.description,
+          permissions: item.permissions,
+          riskScore: item.riskScore,
           purged: false,
-        };
-        found.push(item);
-        setThreats([...found]);
-      } else {
-        log('OK', `  ${app.name}: permission profile nominal`);
+        }));
+
+        log('OK', `Native snapshot collected for ${snapshot.deviceName} (${snapshot.osVersion})`);
+        log('OK', `Runtime permissions: location=${snapshot.permissions.fineLocation ? 'granted' : 'denied'}, notification=${snapshot.permissions.notifications ? 'granted' : 'denied'}, microphone=${snapshot.permissions.microphone ? 'granted' : 'denied'}`);
+        log('OK', `Telemetry: ${snapshot.telemetry.storageAvailable} free / ${snapshot.telemetry.ramAvailableMb.toFixed(1)} MB RAM available`);
+        if (snapshot.rootDetected) {
+          log('THREAT', 'Root access detected in the device runtime.');
+        }
+        if (snapshot.debugEnabled) {
+          log('WARN', 'Debugging state is enabled.');
+        }
+        if (snapshot.networkStatus.mitm || snapshot.networkStatus.vpnActive) {
+          log('THREAT', 'Network interception path detected by the native monitor.');
+        }
+        if (found.length > 0) {
+          found.forEach((threat) => {
+            log('THREAT', `${threat.name} — ${threat.threatType} (${threat.riskScore}/100)`);
+          });
+        } else {
+          log('OK', 'No suspicious package patterns were reported by the runtime scanner.');
+        }
+
+        setThreats(found);
+      } catch (error) {
+        log('WARN', `Native scan failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
-    await wait(250);
-
-    // --- Phase 4: Privacy Monitor ---
-    log('AUDIT', '════════ PHASE 4: PRIVACY / OVERLAY MONITOR ════════');
-    await wait(280);
-    log('AUDIT', 'Scanning for SYSTEM_ALERT_WINDOW overlay grants ...');
-    await wait(400);
-    const overlayApps = SIMULATED_APPS.filter((a) =>
-      a.permissions.includes('SYSTEM_ALERT_WINDOW')
-    );
-    if (overlayApps.length > 0) {
-      log('WARN', `${overlayApps.length} app(s) hold overlay capability — Phishing risk`);
-      overlayApps.forEach((a) =>
-        log('WARN', `  ${a.name} — SYSTEM_ALERT_WINDOW active`)
-      );
     } else {
-      log('OK', 'Overlay attack surface: CLEAN');
+      log('WARN', 'Native Android module unavailable on this platform.');
     }
-    await wait(300);
-    log('AUDIT', 'Checking background camera/microphone access patterns ...');
-    await wait(400);
-    log('OK', 'No covert sensor access detected in last 24h window');
-    await wait(250);
 
-    // --- Phase 5: EXIF Data Leak ---
-    log('AUDIT', '════════ PHASE 5: DATA LEAK SCAN (EXIF) ════════');
     await wait(220);
-    log('AUDIT', 'Scanning /DCIM/Camera — GPS coordinate embedding ...');
-    await wait(450);
-    log('AUDIT', 'Scanning /Pictures — hardware fingerprint markers ...');
-    await wait(380);
-    log('AUDIT', 'Parsing metadata headers: EXIF · XMP · IPTC ...');
-    await wait(300);
-    log('WARN', 'GPS coordinates embedded in 14 media files');
-    log('WARN', 'Hardware fingerprint exposed: {Make: SM-G998B, Model: Galaxy S21+}');
-    log('INFO', 'Recommendation: Strip EXIF before sharing media to external services');
-    await wait(250);
-
-    // --- Finalize ---
     log('SYS', '════════ SCAN COMPLETE ════════');
-    await wait(180);
-    log('SYS', `Threats identified: ${found.length}`);
-    log(
-      'SYS',
-      `Critical: ${found.filter((t) => t.severity === 'critical').length}  |  High: ${found.filter((t) => t.severity === 'high').length}  |  Medium: ${found.filter((t) => t.severity === 'medium').length}`
-    );
-    log('SYS', 'Navigate to PURGE CONSOLE for immediate remediation.');
-
-    setThreats(found);
     setScanState('complete');
     scanning.current = false;
-  }, []);
+  }, [log]);
 
   const purgeThreat = useCallback((id: string) => {
     setThreats((prev) => prev.map((t) => (t.id === id ? { ...t, purged: true } : t)));
