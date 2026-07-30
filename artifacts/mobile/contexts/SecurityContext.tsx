@@ -32,6 +32,21 @@ export interface NetworkStatus {
   encrypted: boolean;
 }
 
+export interface P2PStatus {
+  status: string;
+  message: string;
+  connected: boolean;
+  nodeId: string | null;
+}
+
+export interface GhostAppEntry {
+  packageName: string;
+  appName: string;
+  lastUsedMs: number;
+  daysInactive: number;
+  background: boolean;
+}
+
 interface SecurityContextValue {
   firewallEnabled: boolean;
   scanState: ScanState;
@@ -40,11 +55,18 @@ interface SecurityContextValue {
   networkStatus: NetworkStatus | null;
   rootDetected: boolean;
   debugDetected: boolean;
+  operatorName: string;
+  p2pStatus: P2PStatus | null;
+  ghostApps: GhostAppEntry[];
   toggleFirewall: () => void;
   startScan: () => void;
   purgeThreat: (id: string) => void;
   purgeAll: () => void;
   clearLogs: () => void;
+  saveOperatorName: (name: string) => Promise<boolean>;
+  startP2PConnection: (nodeId: string) => Promise<void>;
+  collectGhostApps: () => Promise<void>;
+  purgeGhostAppCache: (packageName: string) => Promise<boolean>;
   threatCount: number;
   criticalCount: number;
 }
@@ -94,6 +116,11 @@ interface NativeSecurityModule {
   collectSecuritySnapshot: () => Promise<NativeSecuritySnapshot>;
   startRealtimeMonitoring: () => void;
   stopRealtimeMonitoring: () => void;
+  saveOperatorName: (name: string) => Promise<boolean>;
+  loadOperatorName: () => Promise<string>;
+  beginP2PHandshake: (nodeId: string) => Promise<{ status: string; message: string; connected: boolean; nodeId: string }>;
+  collectGhostAppReport: () => Promise<Array<{ packageName: string; appName: string; lastUsedMs: number; daysInactive: number; background: boolean }>>;
+  purgeAppCache: (packageName: string) => Promise<boolean>;
 }
 
 const SecurityContext = createContext<SecurityContextValue | null>(null);
@@ -128,6 +155,9 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus | null>(null);
   const [rootDetected, setRootDetected] = useState(false);
   const [debugDetected, setDebugDetected] = useState(false);
+  const [operatorName, setOperatorName] = useState('Señor Moreno');
+  const [p2pStatus, setP2pStatus] = useState<P2PStatus | null>(null);
+  const [ghostApps, setGhostApps] = useState<GhostAppEntry[]>([]);
   const scanning = useRef(false);
 
   const log = useCallback((level: LogLevel, message: string) => {
@@ -167,9 +197,25 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
       log('WARN', payload.message);
     });
 
+    const p2pSub = nativeEmitter?.addListener('onP2PStatus', (payload: { status: string; message: string; connected: boolean; nodeId: string | null }) => {
+      setP2pStatus(payload);
+      log('SYS', payload.message);
+    });
+
+    const initProfile = async () => {
+      if (!nativeModule) return;
+      const loadedName = await nativeModule.loadOperatorName();
+      if (loadedName?.trim()) {
+        setOperatorName(loadedName.trim());
+      }
+    };
+
+    void initProfile();
+
     return () => {
       sub?.remove();
       clipboardSub?.remove();
+      p2pSub?.remove();
       nativeModule.stopRealtimeMonitoring();
     };
   }, [log]);
@@ -277,6 +323,66 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
 
   const clearLogs = useCallback(() => setLogs([]), []);
 
+  const saveOperatorName = useCallback(async (name: string) => {
+    const value = name.trim();
+    if (!value) return false;
+    if (nativeModule) {
+      const result = await nativeModule.saveOperatorName(value);
+      setOperatorName(value);
+      return result;
+    }
+    setOperatorName(value);
+    return true;
+  }, []);
+
+  const startP2PConnection = useCallback(async (nodeId: string) => {
+    setP2pStatus({ status: 'INIT', message: `Iniciando enlace seguro con ${nodeId}`, connected: false, nodeId });
+    if (!nativeModule) {
+      setP2pStatus({ status: 'UNAVAILABLE', message: 'Módulo nativo P2P no disponible en esta plataforma.', connected: false, nodeId });
+      return;
+    }
+
+    try {
+      const result = await nativeModule.beginP2PHandshake(nodeId);
+      setP2pStatus(result);
+      log('OK', `P2P tunnel: ${result.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setP2pStatus({ status: 'FAILED', message, connected: false, nodeId });
+      log('WARN', `P2P handshake failed: ${message}`);
+    }
+  }, [log]);
+
+  const collectGhostApps = useCallback(async () => {
+    if (!nativeModule) return;
+    try {
+      const data = await nativeModule.collectGhostAppReport();
+      setGhostApps(data.map((item) => ({
+        packageName: item.packageName,
+        appName: item.appName,
+        lastUsedMs: item.lastUsedMs,
+        daysInactive: item.daysInactive,
+        background: item.background,
+      })));
+    } catch (error) {
+      log('WARN', `Ghost app report failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [log]);
+
+  const purgeGhostAppCache = useCallback(async (packageName: string) => {
+    if (!nativeModule) return false;
+    try {
+      const result = await nativeModule.purgeAppCache(packageName);
+      if (result) {
+        log('OK', `Cache cleared for ${packageName}`);
+      }
+      return result;
+    } catch (error) {
+      log('WARN', `Cache purge failed: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }, [log]);
+
   const active = threats.filter((t) => !t.purged);
 
   return (
@@ -289,11 +395,18 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
         networkStatus,
         rootDetected,
         debugDetected,
+        operatorName,
+        p2pStatus,
+        ghostApps,
         toggleFirewall,
         startScan,
         purgeThreat,
         purgeAll,
         clearLogs,
+        saveOperatorName,
+        startP2PConnection,
+        collectGhostApps,
+        purgeGhostAppCache,
         threatCount: active.length,
         criticalCount: active.filter((t) => t.severity === 'critical').length,
       }}

@@ -3,7 +3,6 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TouchableOpacity,
   View,
@@ -20,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSecurity } from '@/contexts/SecurityContext';
 import { useColors } from '@/hooks/useColors';
 import RadarHUD from '@/components/RadarHUD';
+import { router } from 'expo-router';
 
 function StatusIndicator({ label, value, ok }: { label: string; value: string; ok: boolean }) {
   const colors = useColors();
@@ -47,6 +47,7 @@ export default function ShieldScreen() {
     rootDetected,
     startScan,
     purgeAll,
+    startP2PConnection,
   } = useSecurity();
 
   const isScanning = scanState === 'scanning';
@@ -87,6 +88,12 @@ export default function ShieldScreen() {
   const handlePurge = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     purgeAll();
+  };
+
+  const handleNodePress = async (nodeId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    await startP2PConnection(nodeId);
+    router.push('/p2p');
   };
 
   const overallOk = threatCount === 0 && !rootDetected;
@@ -150,7 +157,7 @@ export default function ShieldScreen() {
               glowStyle,
             ]}
           >
-            <RadarHUD isScanning={isScanning} threatCount={threatCount} size={220} />
+            <RadarHUD isScanning={isScanning} threatCount={threatCount} size={220} onNodePress={handleNodePress} />
           </Animated.View>
           <View style={styles.coreInfo}>
             <Text style={[styles.coreInfoText, { color: colors.cyan }]}>TRÁFICO ENRUTADO</Text>
@@ -206,24 +213,18 @@ export default function ShieldScreen() {
           <Text style={[styles.sentinelTitle, { color: colors.foreground }]}>HARDWARE SENTINEL</Text>
         </View>
         <View style={styles.sentinelGrid}>
-          <View style={styles.sentinelCell}>
-            <Text style={[styles.sentinelLabel, { color: colors.mutedForeground }]}>LINK</Text>
-            <Text style={[styles.sentinelValue, { color: colors.primary }]}> 
-              {networkStatus?.encrypted ? 'ENCRYPTED' : 'STANDBY'}
-            </Text>
-          </View>
-          <View style={styles.sentinelCell}>
-            <Text style={[styles.sentinelLabel, { color: colors.mutedForeground }]}>ROOT</Text>
-            <Text style={[styles.sentinelValue, { color: rootDetected ? colors.threat : colors.primary }]}> 
-              {rootDetected ? 'ALERT' : 'LOCKED'}
-            </Text>
-          </View>
-          <View style={styles.sentinelCell}>
-            <Text style={[styles.sentinelLabel, { color: colors.mutedForeground }]}>DEBUG</Text>
-            <Text style={[styles.sentinelValue, { color: colors.warning }]}> 
-              {scanState === 'scanning' ? 'ACTIVE' : 'WATCH'}
-            </Text>
-          </View>
+          <TouchableOpacity onPress={() => router.push('/voice')} style={styles.sentinelCell}>
+            <Text style={[styles.sentinelLabel, { color: colors.mutedForeground }]}>VOZ</Text>
+            <Text style={[styles.sentinelValue, { color: colors.primary }]}>NUCLEO NATURAL</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/privacy')} style={styles.sentinelCell}>
+            <Text style={[styles.sentinelLabel, { color: colors.mutedForeground }]}>PRIVACY</Text>
+            <Text style={[styles.sentinelValue, { color: colors.cyan }]}>EXIF CLEAN</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/ghosts')} style={styles.sentinelCell}>
+            <Text style={[styles.sentinelLabel, { color: colors.mutedForeground }]}>PURGA</Text>
+            <Text style={[styles.sentinelValue, { color: colors.warning }]}>GHOST APPS</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </ScrollView>

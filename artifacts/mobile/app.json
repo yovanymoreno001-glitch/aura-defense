@@ -17,7 +17,7 @@
       "supportsTablet": false
     },
     "android": {
-      "package": "com.anonymous.mobile"
+      "package": "com.aura.defensor"
     },
     "web": {
       "favicon": "./assets/images/icon.png"

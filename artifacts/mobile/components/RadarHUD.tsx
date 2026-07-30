@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -13,6 +13,7 @@ interface RadarHUDProps {
   isScanning: boolean;
   threatCount?: number;
   size?: number;
+  onNodePress?: (nodeId: string) => void;
 }
 
 const BLIP_POSITIONS = [
@@ -23,7 +24,7 @@ const BLIP_POSITIONS = [
   { angle: 172, r: 0.32 },
 ];
 
-export default function RadarHUD({ isScanning, threatCount = 0, size = 270 }: RadarHUDProps) {
+export default function RadarHUD({ isScanning, threatCount = 0, size = 270, onNodePress }: RadarHUDProps) {
   const colors = useColors();
   const rotation = useSharedValue(0);
   const pulseVal = useSharedValue(0.5);
@@ -61,6 +62,11 @@ export default function RadarHUD({ isScanning, threatCount = 0, size = 270 }: Ra
   }));
 
   const RING_SCALES = [0.28, 0.52, 0.76, 1.0];
+  const p2pNodes = [
+    { id: 'NODE-ALPHA', angle: 204, r: 0.55, color: colors.cyan },
+    { id: 'NODE-BRAVO', angle: 346, r: 0.42, color: colors.primary },
+    { id: 'NODE-CHARLIE', angle: 116, r: 0.26, color: colors.purple },
+  ];
 
   return (
     <View style={[styles.outer, { width: size, height: size, borderRadius: half }]}>
@@ -162,7 +168,7 @@ export default function RadarHUD({ isScanning, threatCount = 0, size = 270 }: Ra
         const by = half + Math.sin(rad) * half * blip.r - 5;
         return (
           <Animated.View
-            key={i}
+            key={`threat-${i}`}
             style={[
               {
                 position: 'absolute',
@@ -180,6 +186,35 @@ export default function RadarHUD({ isScanning, threatCount = 0, size = 270 }: Ra
               },
               blipOpacity,
             ]}
+          />
+        );
+      })}
+
+      {p2pNodes.map((node) => {
+        const rad = (node.angle * Math.PI) / 180;
+        const bx = half + Math.cos(rad) * half * node.r - 8;
+        const by = half + Math.sin(rad) * half * node.r - 8;
+        return (
+          <TouchableOpacity
+            key={node.id}
+            activeOpacity={0.9}
+            onPress={() => onNodePress?.(node.id)}
+            style={{
+              position: 'absolute',
+              left: bx,
+              top: by,
+              width: 16,
+              height: 16,
+              borderRadius: 8,
+              backgroundColor: node.color,
+              borderWidth: 1.5,
+              borderColor: 'rgba(255,255,255,0.75)',
+              shadowColor: node.color,
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.95,
+              shadowRadius: 12,
+              elevation: 7,
+            }}
           />
         );
       })}

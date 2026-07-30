@@ -1,13 +1,13 @@
 {
   "expo": {
     "name": "AuraDefensa",
-    "slug": "auradefens-1",
+    "slug": "auradefensa",
     "version": "1.0.0",
     "platforms": [
       "android"
     ],
     "android": {
-      "package": "com.example.auradefensa"
+      "package": "com.aura.defensor"
     },
     "extra": {
       "eas": {
